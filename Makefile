@@ -526,6 +526,7 @@ COMMON_SRC = \
             rx/pwm.c \
             rx/rx.c \
             rx/rx_spi.c \
+            rx/crsf.c \
             rx/sbus.c \
             rx/spektrum.c \
             rx/sumd.c \
@@ -558,6 +559,7 @@ HIGHEND_SRC = \
             sensors/sonar.c \
             sensors/barometer.c \
             telemetry/telemetry.c \
+            telemetry/crsf.c \
             telemetry/frsky.c \
             telemetry/hott.c \
             telemetry/smartport.c \
