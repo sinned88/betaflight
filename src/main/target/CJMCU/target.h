@@ -59,7 +59,6 @@
 #undef SERIAL_RX
 #define SKIP_TASK_STATISTICS
 #define SKIP_CLI_COMMAND_HELP
-#define SKIP_PID_FLOAT
 #endif
 
 // Since the CJMCU PCB has holes for 4 motors in each corner we can save same flash space by disabling support for other mixers.

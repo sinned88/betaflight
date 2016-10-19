@@ -54,7 +54,7 @@ extern float rcInput[3];
 
 static bool pidStabilisationEnabled;
 
-int16_t axisPID[3];
+int16_t axisPIDf[3];
 
 #ifdef BLACKBOX
 int32_t axisPID_P[3], axisPID_I[3], axisPID_D[3];
@@ -65,16 +65,6 @@ uint8_t PIDweight[3];
 
 static int32_t errorGyroI[3];
 static float errorGyroIf[3];
-
-static void pidLegacy(const pidProfile_t *pidProfile, uint16_t max_angle_inclination,
-        const rollAndPitchTrims_t *angleTrim, const rxConfig_t *rxConfig);
-#ifdef SKIP_PID_FLOAT
-pidControllerFuncPtr pid_controller = pidLegacy; // which pid controller are we using
-#else
-static void pidBetaflight(const pidProfile_t *pidProfile, uint16_t max_angle_inclination,
-        const rollAndPitchTrims_t *angleTrim, const rxConfig_t *rxConfig);
-pidControllerFuncPtr pid_controller = pidBetaflight; // which pid controller are we using
-#endif
 
 void setTargetPidLooptime(uint32_t pidLooptime)
 {
@@ -133,9 +123,8 @@ void initFilters(const pidProfile_t *pidProfile) {
     }
 }
 
-#ifndef SKIP_PID_FLOAT
 // Betaflight pid controller, which will be maintained in the future with additional features specialised for current (mini) multirotor usage. Based on 2DOF reference design (matlab)
-static void pidBetaflight(const pidProfile_t *pidProfile, uint16_t max_angle_inclination,
+void pidController(const pidProfile_t *pidProfile, uint16_t max_angle_inclination,
          const rollAndPitchTrims_t *angleTrim, const rxConfig_t *rxConfig)
 {
     float errorRate = 0, rD = 0, PVRate = 0, dynC;
@@ -297,17 +286,17 @@ static void pidBetaflight(const pidProfile_t *pidProfile, uint16_t max_angle_inc
             DTerm = Kd[axis] * delta * tpaFactor;
 
             // -----calculate total PID output
-            axisPID[axis] = constrain(lrintf(PTerm + ITerm + DTerm), -pidProfile->pidSumLimit, pidProfile->pidSumLimit);
+            axisPIDf[axis] = PTerm + ITerm + DTerm;
         } else {
             if (pidProfile->yaw_lpf_hz) PTerm = pt1FilterApply4(&yawFilter, PTerm, pidProfile->yaw_lpf_hz, getdT());
 
-            axisPID[axis] = lrintf(PTerm + ITerm);
+            axisPIDf[axis] = PTerm + ITerm;
 
             DTerm = 0.0f; // needed for blackbox
         }
 
         // Disable PID control at zero throttle
-        if (!pidStabilisationEnabled) axisPID[axis] = 0;
+        if (!pidStabilisationEnabled) axisPIDf[axis] = 0;
 
 #ifdef GTUNE
         if (FLIGHT_MODE(GTUNE_MODE) && ARMING_FLAG(ARMED)) {
@@ -322,166 +311,3 @@ static void pidBetaflight(const pidProfile_t *pidProfile, uint16_t max_angle_inc
 #endif
     }
 }
-#endif
-
-// Legacy pid controller betaflight evolved pid rewrite based on 2.9 releae. Good for fastest cycletimes for those who believe in that. Don't expect much development in the future
-static void pidLegacy(const pidProfile_t *pidProfile, uint16_t max_angle_inclination,
-        const rollAndPitchTrims_t *angleTrim, const rxConfig_t *rxConfig)
-{
-    int axis;
-    int32_t PTerm, ITerm, DTerm, delta;
-    static int32_t lastRateError[3];
-    int32_t AngleRateTmp = 0, RateError = 0, gyroRate = 0;
-
-    int8_t horizonLevelStrength = 100;
-
-    initFilters(pidProfile);
-
-    if (FLIGHT_MODE(HORIZON_MODE)) {
-        // Figure out the raw stick positions
-        const int32_t stickPosAil = ABS(getRcStickDeflection(FD_ROLL, rxConfig->midrc));
-        const int32_t stickPosEle = ABS(getRcStickDeflection(FD_PITCH, rxConfig->midrc));
-        const int32_t mostDeflectedPos = MAX(stickPosAil, stickPosEle);
-        // Progressively turn off the horizon self level strength as the stick is banged over
-        horizonLevelStrength = (500 - mostDeflectedPos) / 5;  // 100 at centre stick, 0 = max stick deflection
-        // Using Level D as a Sensitivity for Horizon. 0 more level to 255 more rate. Default value of 100 seems to work fine.
-        // For more rate mode increase D and slower flips and rolls will be possible
-        horizonLevelStrength = constrain((10 * (horizonLevelStrength - 100) * (10 * pidProfile->D8[PIDLEVEL] / 80) / 100) + 100, 0, 100);
-    }
-
-    // ----------PID controller----------
-    for (axis = 0; axis < 3; axis++) {
-
-        // -----Get the desired angle rate depending on flight mode
-        AngleRateTmp = (int32_t)setpointRate[axis];
-
-        if ((FLIGHT_MODE(ANGLE_MODE) || FLIGHT_MODE(HORIZON_MODE)) && axis != YAW) {
-            // calculate error angle and limit the angle to max configured inclination
-#ifdef GPS
-            const int32_t errorAngle = constrain(2 * rcCommand[axis] + GPS_angle[axis], -((int) max_angle_inclination),
-                +max_angle_inclination) - attitude.raw[axis] + angleTrim->raw[axis];
-#else
-            const int32_t errorAngle = constrain(2 * rcCommand[axis], -((int) max_angle_inclination),
-                +max_angle_inclination) - attitude.raw[axis] + angleTrim->raw[axis];
-#endif
-            if (FLIGHT_MODE(ANGLE_MODE)) {
-                // ANGLE mode - control is angle based, so control loop is needed
-                AngleRateTmp = (errorAngle * pidProfile->P8[PIDLEVEL]) >> 4;
-            } else {
-                // HORIZON mode - mix up angle error to desired AngleRateTmp to add a little auto-level feel,
-                // horizonLevelStrength is scaled to the stick input
-                AngleRateTmp =  AngleRateTmp + ((errorAngle * pidProfile->I8[PIDLEVEL] * horizonLevelStrength / 100) >> 4);
-            }
-        }
-
-        // --------low-level gyro-based PID. ----------
-        // Used in stand-alone mode for ACRO, controlled by higher level regulators in other modes
-        // -----calculate scaled error.AngleRates
-        // multiplication of rcCommand corresponds to changing the sticks scaling here
-        gyroRate = gyroADC[axis] / 4;
-
-        RateError = AngleRateTmp - gyroRate;
-
-        // -----calculate P component
-        PTerm = (RateError * pidProfile->P8[axis] * PIDweight[axis] / 100) >> 7;
-
-        // Constrain YAW by yaw_p_limit value if not servo driven in that case servolimits apply
-        if((motorCount >= 4 && pidProfile->yaw_p_limit) && axis == YAW) {
-            PTerm = constrain(PTerm, -pidProfile->yaw_p_limit, pidProfile->yaw_p_limit);
-        }
-
-        // -----calculate I component
-        // there should be no division before accumulating the error to integrator, because the precision would be reduced.
-        // Precision is critical, as I prevents from long-time drift. Thus, 32 bits integrator is used.
-        // Time correction (to avoid different I scaling for different builds based on average cycle time)
-        // is normalized to cycle time = 2048.
-        // Prevent Accumulation
-        uint16_t resetRate = (axis == YAW) ? pidProfile->yawItermIgnoreRate : pidProfile->rollPitchItermIgnoreRate;
-        uint16_t dynamicFactor = (1 << 8) - constrain(((ABS(AngleRateTmp) << 6) / resetRate), 0, 1 << 8);
-        uint16_t dynamicKi = (pidProfile->I8[axis] * dynamicFactor) >> 8;
-
-        errorGyroI[axis] = errorGyroI[axis] + ((RateError * (uint16_t)targetPidLooptime) >> 11) * dynamicKi;
-
-        // limit maximum integrator value to prevent WindUp - accumulating extreme values when system is saturated.
-        // I coefficient (I8) moved before integration to make limiting independent from PID settings
-        errorGyroI[axis] = constrain(errorGyroI[axis], (int32_t) - GYRO_I_MAX << 13, (int32_t) + GYRO_I_MAX << 13);
-
-        ITerm = errorGyroI[axis] >> 13;
-
-        //-----calculate D-term
-        if (axis != YAW) {
-            if (pidProfile->deltaMethod == DELTA_FROM_ERROR) {
-                delta = RateError - lastRateError[axis];
-                lastRateError[axis] = RateError;
-            } else {
-                delta = -(gyroRate - lastRateError[axis]);
-                lastRateError[axis] = gyroRate;
-            }
-
-            // Divide delta by targetLooptime to get differential (ie dr/dt)
-            delta = (delta * ((uint16_t) 0xFFFF / ((uint16_t)targetPidLooptime >> 4))) >> 5;
-
-            if (debugMode == DEBUG_DTERM_FILTER) debug[axis] = (delta * pidProfile->D8[axis] * PIDweight[axis] / 100) >> 8;
-
-            // Filter delta
-            if (pidProfile->dterm_lpf_hz) {
-                float deltaf = delta;  // single conversion
-                if (pidProfile->dterm_filter_type == FILTER_BIQUAD)
-                    delta = biquadFilterApply(&dtermFilterLpf[axis], delta);
-                else if (pidProfile->dterm_filter_type == FILTER_PT1)
-                    delta = pt1FilterApply4(&deltaFilter[axis], delta, pidProfile->dterm_lpf_hz, getdT());
-                else
-                    delta = firFilterUpdate(&dtermDenoisingState[axis], delta);
-
-                delta = lrintf(deltaf);
-            }
-
-            DTerm = (delta * pidProfile->D8[axis] * PIDweight[axis] / 100) >> 8;
-
-            // -----calculate total PID output
-            axisPID[axis] = PTerm + ITerm + DTerm;
-        } else {
-            if (pidProfile->yaw_lpf_hz) PTerm = pt1FilterApply4(&yawFilter, PTerm, pidProfile->yaw_lpf_hz, getdT());
-
-            axisPID[axis] = PTerm + ITerm;
-
-            if (motorCount >= 4) {
-                int16_t yaw_jump_prevention_limit = constrain(YAW_JUMP_PREVENTION_LIMIT_HIGH - (pidProfile->D8[axis] << 3), YAW_JUMP_PREVENTION_LIMIT_LOW, YAW_JUMP_PREVENTION_LIMIT_HIGH);
-
-                // prevent "yaw jump" during yaw correction
-                axisPID[YAW] = constrain(axisPID[YAW], -yaw_jump_prevention_limit - ABS(rcCommand[YAW]), yaw_jump_prevention_limit + ABS(rcCommand[YAW]));
-            }
-
-            DTerm = 0; // needed for blackbox
-        }
-
-        if (!pidStabilisationEnabled) axisPID[axis] = 0;
-
-#ifdef GTUNE
-        if (FLIGHT_MODE(GTUNE_MODE) && ARMING_FLAG(ARMED)) {
-             calculate_Gtune(axis);
-        }
-#endif
-
-#ifdef BLACKBOX
-        axisPID_P[axis] = PTerm;
-        axisPID_I[axis] = ITerm;
-        axisPID_D[axis] = DTerm;
-#endif
-    }
-}
-
-void pidSetController(pidControllerType_e type)
-{
-    switch (type) {
-        default:
-        case PID_CONTROLLER_LEGACY:
-            pid_controller = pidLegacy;
-            break;
-#ifndef SKIP_PID_FLOAT
-        case PID_CONTROLLER_BETAFLIGHT:
-            pid_controller = pidBetaflight;
-#endif
-    }
-}
-

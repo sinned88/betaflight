@@ -175,7 +175,7 @@ protected:
 
         memset(rcData, 0, sizeof(rcData));
         memset(rcCommand, 0, sizeof(rcCommand));
-        memset(axisPID, 0, sizeof(axisPID));
+        memset(axisPIDf, 0, sizeof(axisPIDf));
 
         memset(&customMotorMixer, 0, sizeof(customMotorMixer));
     }
@@ -230,7 +230,7 @@ TEST_F(BasicMixerIntegrationTest, TestTricopterServo)
     mixerUsePWMOutputConfiguration(&pwmOutputConfiguration);
 
     // and
-    axisPID[YAW] = 0;
+    axisPIDf[YAW] = 0;
 
     // when
     mixTable();
@@ -262,8 +262,8 @@ TEST_F(BasicMixerIntegrationTest, TestQuadMotors)
     memset(rcCommand, 0, sizeof(rcCommand));
 
     // and
-    memset(axisPID, 0, sizeof(axisPID));
-    axisPID[YAW] = 0;
+    memset(axisPIDf, 0, sizeof(axisPIDf));
+    axisPIDf[YAW] = 0;
 
 
     // when
@@ -347,8 +347,8 @@ TEST_F(CustomMixerIntegrationTest, TestCustomMixer)
     rcData[AUX1] = 2000;
 
     // and
-    memset(axisPID, 0, sizeof(axisPID));
-    axisPID[YAW] = 0;
+    memset(axisPIDf, 0, sizeof(axisPIDf));
+    axisPIDf[YAW] = 0;
 
 
     // when
@@ -379,7 +379,7 @@ extern "C" {
 rollAndPitchInclination_t inclination;
 rxRuntimeConfig_t rxRuntimeConfig;
 
-int16_t axisPID[XYZ_AXIS_COUNT];
+int16_t axisPIDf[XYZ_AXIS_COUNT];
 int16_t rcCommand[4];
 int16_t rcData[MAX_SUPPORTED_RC_CHANNEL_COUNT];
 

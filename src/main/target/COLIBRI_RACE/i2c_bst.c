@@ -711,7 +711,7 @@ static bool bstSlaveProcessFeedbackCommand(uint8_t bstRequest)
             bstWriteNames(pidnames);
             break;
         case BST_PID_CONTROLLER:
-            bstWrite8(currentProfile->pidProfile.pidController);
+            bstWrite8(PID_CONTROLLER_BETAFLIGHT);
             break;
         case BST_MODE_RANGES:
             for (i = 0; i < MAX_MODE_ACTIVATION_CONDITION_COUNT; i++) {
@@ -1040,8 +1040,6 @@ static bool bstSlaveProcessWriteCommand(uint8_t bstWriteCommand)
             cycleTime = bstRead16();
             break;
         case BST_SET_PID_CONTROLLER:
-            currentProfile->pidProfile.pidController = bstRead8();
-            pidSetController(currentProfile->pidProfile.pidController);
             break;
         case BST_SET_PID:
             for (i = 0; i < PID_ITEM_COUNT; i++) {
